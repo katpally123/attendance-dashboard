@@ -1,8 +1,20 @@
 // --- Load settings (dept IDs, shift schedule) ---
+// --- Load settings (dept IDs, shift schedule) ---
 let SETTINGS = null;
-https://raw.githubusercontent.com/katpally123/attendance-dashboard/refs/heads/main/config/settings.json
-  .then(r => r.json())
-  .then(cfg => SETTINGS = cfg);
+
+fetch("https://raw.githubusercontent.com/katpally123/attendance-dashboard/main/config/settings.json")
+  .then(r => {
+    if (!r.ok) throw new Error("Failed to load settings.json");
+    return r.json();
+  })
+  .then(cfg => {
+    SETTINGS = cfg;
+    renderShiftCodes();            // in case the page loaded before settings arrived
+  })
+  .catch(err => {
+    console.error(err);
+    alert("Couldn't load settings.json. Check repo visibility and the URL.");
+  });
 
 // --- Elements ---
 const dateEl   = document.getElementById("dateInput");

@@ -1,1 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>DD Metrics Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="./style.css" />
+  <!-- PapaParse for CSV parsing -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script defer src="./app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>DD Metrics Dashboard</h1>
+  </header>
+
+  <main class="container">
+    <!-- Step 1: Day & Shift -->
+    <section class="card">
+      <h2>Step 1 — Pick day & shift</h2>
+      <div class="row">
+        <label>
+          Date
+          <input type="date" id="dateInput" />
+        </label>
+        <label>
+          Shift
+          <select id="shiftInput">
+            <option value="Day">Day</option>
+            <option value="Night">Night</option>
+          </select>
+        </label>
+        <label class="checkbox">
+          <input type="checkbox" id="excludeNewHires" checked />
+          Exclude new hires (&lt; 3 days)
+        </label>
+      </div>
+      <div id="shiftCodes" class="hint"></div>
+    </section>
+
+    <!-- Step 2: Upload files -->
+    <section class="card">
+      <h2>Step 2 — Upload files for the selected day</h2>
+      <div class="row">
+        <label class="file">
+          Roster CSV
+          <input type="file" id="rosterFile" accept=".csv" />
+        </label>
+        <label class="file">
+          MyTime CSV
+          <input type="file" id="mytimeFile" accept=".csv" />
+        </label>
+        <button id="processBtn" class="primary">Process</button>
+      </div>
+      <div id="fileStatus" class="hint"></div>
+    </section>
+
+    <!-- Step 3: Results -->
+    <section class="card">
+      <h2>Results — Regular HC & Present (by Department × AMZN / TEMP)</h2>
+      <div id="summaryChips" class="chips"></div>
+
+      <div class="grid-2">
+        <div>
+          <h3>Regular HC (Cohort Expected)</h3>
+          <table id="expectedTable" class="table"></table>
+        </div>
+        <div>
+          <h3>Regular HC Present (Excluding Swaps)</h3>
+          <table id="presentTable" class="table"></table>
+        </div>
+      </div>
+
+      <details class="mt">
+        <summary>What’s included in these counts?</summary>
+        <ul>
+          <li>Filters to the selected day’s scheduled <b>Corner</b> codes (e.g., DA, DL, DC, DH). Night = replace D→N.</li>
+          <li><b>Inbound</b>: Dept IDs 1211010, 1211020, 1299010, 1299020.</li>
+          <li><b>ICQA</b>: Dept IDs 1299070, 1211070 with <b>Management Area ID = 27</b>.</li>
+          <li><b>CRETs</b>: Dept IDs 1299070, 1211070 with <b>Management Area ID = 22</b>.</li>
+          <li><b>Present</b> uses MyTime <code>On Premises</code> = “X”.</li>
+          <li>Optional: excludes new hires within last 3 days (toggle in Step 1).</li>
+        </ul>
+      </details>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <small>Built for your DD workflow — static GitHub Pages, client-side only.</small>
+  </footer>
+</body>
+</html>
 

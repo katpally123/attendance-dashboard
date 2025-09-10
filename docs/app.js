@@ -1,6 +1,6 @@
 // --- Load settings (dept IDs, shift schedule) ---
 let SETTINGS = null;
-fetch("../config/settings.json")
+https://raw.githubusercontent.com/katpally123/attendance-dashboard/refs/heads/main/config/settings.json
   .then(r => r.json())
   .then(cfg => SETTINGS = cfg);
 

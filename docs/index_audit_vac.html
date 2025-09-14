@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>DD Metrics — Audit (Vacations)</title>
+  <title>DD Metrics — Audit (Vacations + DA)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="./style.css" />
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
@@ -10,11 +10,11 @@
 </head>
 <body>
   <header class="topbar">
-    <h1>DD Metrics — Audit (Vacations)</h1>
+    <h1>DD Metrics — Audit (Vacations + DA)</h1>
   </header>
 
   <main class="container">
-    <!-- Step 1 -->
+    <!-- Step 1: Day & Shift -->
     <section class="card">
       <h2>Step 1 — Pick day & shift</h2>
       <div class="row">
@@ -33,7 +33,7 @@
       <div id="shiftCodes" class="hint"></div>
     </section>
 
-    <!-- Step 2 -->
+    <!-- Step 2: Uploads -->
     <section class="card">
       <h2>Step 2 — Upload files (same date)</h2>
       <div class="row">
@@ -68,6 +68,7 @@
         </div>
       </div>
 
+      <!-- Verify & download -->
       <div id="verify" class="mt"></div>
       <button id="downloadAudit" class="primary">Download audit CSV</button>
 
@@ -75,16 +76,16 @@
         <summary>What’s included?</summary>
         <ul>
           <li>Corner filter by selected day/shift (from <code>settings.json</code>).</li>
-          <li><b>DA</b> IDs: <code>1211030, 1211040, 1299030, 1299040</code>. Inbound excludes DA IDs to avoid double counting.</li>
+          <li><b>DA</b> IDs: <code>1211030, 1211040, 1299030, 1299040</code>. Inbound excludes DA to avoid double counting.</li>
           <li><b>Present</b> = MyTime “On Premises” markers.</li>
-          <li><b>Vacations</b>: From CAN Daily Hours Summary → exclude if <code>Vacation &gt; 0</code> or <code>Vacation Unpaid &gt; 0</code>.</li>
+          <li><b>Vacations</b>: From CAN Daily Hours Summary → exclude if <code>Vacation</code> or <code>Vacation Unpaid</code> have hours (&gt;0), including <code>HH:MM</code>.</li>
         </ul>
       </details>
     </section>
   </main>
 
   <footer class="foot">
-    <small>Audit + Vacations page — safe to test without touching your main dashboard.</small>
+    <small>Audit + Vacations build — safe to test without touching your main dashboard.</small>
   </footer>
 </body>
 </html>

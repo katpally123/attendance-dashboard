@@ -1,12 +1,20 @@
-// ====== SETTINGS (use raw URL so it works everywhere) ======
+// ====== SETTINGS (raw URL so it works on Pages) ======
 const SETTINGS_URL = "https://raw.githubusercontent.com/katpally123/attendance-dashboard/main/config/settings.json";
 
 // ====== Load settings ======
 let SETTINGS = null;
 fetch(SETTINGS_URL)
   .then(r => { if(!r.ok) throw new Error("settings.json fetch failed"); return r.json(); })
-  .then(cfg => { SETTINGS = cfg; renderShiftCodes(); })
+  .then(cfg => { SETTINGS = cfg; ensureDABucket(); renderShiftCodes(); })
   .catch(e => { console.error(e); alert("Couldn't load settings.json"); });
+
+// ====== Ensure DA bucket exists (non-destructive) ======
+function ensureDABucket(){
+  SETTINGS.departments = SETTINGS.departments || {};
+  if (!SETTINGS.departments.DA) {
+    SETTINGS.departments.DA = { "dept_ids": ["1211030","1211040","1299030","1299040"] };
+  }
+}
 
 // ====== Elements ======
 const dateEl   = document.getElementById("dateInput");
@@ -17,11 +25,12 @@ const mytimeEl = document.getElementById("mytimeFile");
 const codesEl  = document.getElementById("shiftCodes");
 const fileStatus = document.getElementById("fileStatus");
 const processBtn = document.getElementById("processBtn");
+
 const expectedTable = document.getElementById("expectedTable");
 const presentTable  = document.getElementById("presentTable");
 const summaryChips  = document.getElementById("summaryChips");
 
-// Defaults: today + Day
+// Defaults
 (function initDefaults(){
   const today = new Date();
   dateEl.value = today.toISOString().slice(0,10);
@@ -82,6 +91,13 @@ function findKey(row, candidates){
   for (const k of keys){ const ck = canon(k).replace(/\?/g,""); if (wanted.includes(ck)) return k; }
   return null;
 }
+function renderShiftCodes(){
+  if (!SETTINGS) return;
+  const dayName = toDayName(dateEl.value);
+  const shift = shiftEl.value;
+  const codes = (SETTINGS.shift_schedule?.[shift]?.[dayName]) || [];
+  codesEl.innerHTML = `Shifts for <b>${dayName}</b> — <b>${shift}</b>: ${codes.map(c=>`<code>${c}</code>`).join(" ")}`;
+}
 function sumBlock(block){
   const acc = {AMZN:0, TEMP:0, TOTAL:0};
   for (const k of Object.keys(block)){
@@ -118,13 +134,6 @@ function renderChips(expected, present, dayName, shift, codes){
     <span class="chip ${pre>=exp?'ok':'warn'}">Present Total: <b>${pre}</b> (${pct}%)</span>
   `;
 }
-function renderShiftCodes(){
-  if (!SETTINGS) return;
-  const dayName = toDayName(dateEl.value);
-  const shift = shiftEl.value;
-  const codes = (SETTINGS.shift_schedule?.[shift]?.[dayName]) || [];
-  codesEl.innerHTML = `Shifts for <b>${dayName}</b> — <b>${shift}</b>: ${codes.map(c=>`<code>${c}</code>`).join(" ")}`;
-}
 
 // ====== Verify/Drilldown/Audit ======
 function downloadCSV(filename, rows) {
@@ -139,6 +148,8 @@ function downloadCSV(filename, rows) {
 }
 function renderVerifyPanel(stats) {
   const el = document.getElementById("verify");
+  if (!el) return;
+
   const pill = (k,v) => `<span class="chip"><b>${k}</b>: ${v}</span>`;
   const row = (name, obj, key) => `
     <tr>
@@ -170,6 +181,7 @@ function renderVerifyPanel(stats) {
       </thead>
       <tbody>
         ${row("Inbound", stats.byDept.Inbound, "Inbound")}
+        ${row("DA",      stats.byDept.DA,      "DA")}
         ${row("ICQA",    stats.byDept.ICQA,    "ICQA")}
         ${row("CRETs",   stats.byDept.CRETs,   "CRETs")}
       </tbody>
@@ -191,9 +203,8 @@ function renderVerifyPanel(stats) {
     });
   });
 
-  document.getElementById("downloadAudit").onclick = ()=>{
-    downloadCSV(`audit_${stats.day}_${stats.shift}.csv`, stats.auditRows);
-  };
+  const dl = document.getElementById("downloadAudit");
+  if (dl) dl.onclick = ()=> downloadCSV(`audit_${stats.day}_${stats.shift}.csv`, stats.auditRows);
 }
 
 // ====== Main process ======
@@ -257,7 +268,7 @@ processBtn.addEventListener("click", async ()=>{
       return { empId, deptId, areaId, empType, sp, corner, met, start, onPrem };
     });
 
-    // --- Filter by Corner codes for selected day/shift ---
+    // --- Corner filter ---
     let filtered = rosterEnriched.filter(x => codes.includes(x.corner));
 
     // --- Exclude new hires (<3 days) if toggled ---
@@ -270,10 +281,16 @@ processBtn.addEventListener("click", async ()=>{
       });
     }
 
-    // --- Buckets ---
+    // ====== Buckets with DA (Inbound excludes DA IDs) ======
     const cfg = SETTINGS.departments;
+    const DA_IDS = cfg.DA.dept_ids;
+    const inboundMinusDA = filtered.filter(
+      x => cfg.Inbound.dept_ids.includes(x.deptId) && !DA_IDS.includes(x.deptId)
+    );
+
     const groups = {
-      Inbound: filtered.filter(x => cfg.Inbound.dept_ids.includes(x.deptId)),
+      Inbound: inboundMinusDA,
+      DA:      filtered.filter(x => DA_IDS.includes(x.deptId)),
       ICQA:    filtered.filter(x => cfg.ICQA.dept_ids.includes(x.deptId) && x.areaId === cfg.ICQA.management_area_id),
       CRETs:   filtered.filter(x => cfg.CRETs.dept_ids.includes(x.deptId) && x.areaId === cfg.CRETs.management_area_id)
     };
@@ -287,23 +304,29 @@ processBtn.addEventListener("click", async ()=>{
 
     const expected = {
       Inbound: countByType(groups.Inbound, false),
+      DA:      countByType(groups.DA, false),
       ICQA:    countByType(groups.ICQA, false),
       CRETs:   countByType(groups.CRETs, false)
     };
     const present = {
       Inbound: countByType(groups.Inbound, true),
+      DA:      countByType(groups.DA, true),
       ICQA:    countByType(groups.ICQA, true),
       CRETs:   countByType(groups.CRETs, true)
     };
 
-    // --- Render core tables ---
-    renderTables(expected, present);
-    renderChips(expected, present, toDayName(dateEl.value), shift, codes);
+    // Keep output order stable
+    const ordered = (obj, order) => Object.fromEntries(order.map(k=>[k, obj[k]]));
+    const order = ["Inbound","DA","ICQA","CRETs"];
+
+    renderTables(ordered(expected, order), ordered(present, order));
+    renderChips(expected, present, dayName, shift, codes);
     fileStatus.textContent = "Done.";
 
     // --- Build audit evidence (row-level) ---
     const tagDept = (x)=>{
-      if (cfg.Inbound.dept_ids.includes(x.deptId)) return "Inbound";
+      if (DA_IDS.includes(x.deptId)) return "DA";
+      if (cfg.Inbound.dept_ids.includes(x.deptId) && !DA_IDS.includes(x.deptId)) return "Inbound";
       if (cfg.ICQA.dept_ids.includes(x.deptId) && x.areaId===cfg.ICQA.management_area_id) return "ICQA";
       if (cfg.CRETs.dept_ids.includes(x.deptId) && x.areaId===cfg.CRETs.management_area_id) return "CRETs";
       return "Other";
@@ -323,6 +346,14 @@ processBtn.addEventListener("click", async ()=>{
         "pre-temp": sampleOf(groups.Inbound, r=>r.empType==="TEMP" && r.onPrem),
         "pre-tot":  sampleOf(groups.Inbound, r=>r.onPrem)
       },
+      DA: {
+        "exp-amzn": sampleOf(groups.DA, r=>r.empType==="AMZN"),
+        "exp-temp": sampleOf(groups.DA, r=>r.empType==="TEMP"),
+        "exp-tot":  groups.DA.slice(0,200),
+        "pre-amzn": sampleOf(groups.DA, r=>r.empType==="AMZN" && r.onPrem),
+        "pre-temp": sampleOf(groups.DA, r=>r.empType==="TEMP" && r.onPrem),
+        "pre-tot":  sampleOf(groups.DA, r=>r.onPrem)
+      },
       ICQA: {
         "exp-amzn": sampleOf(groups.ICQA, r=>r.empType==="AMZN"),
         "exp-temp": sampleOf(groups.ICQA, r=>r.empType==="TEMP"),
@@ -341,9 +372,8 @@ processBtn.addEventListener("click", async ()=>{
       }
     };
 
-    // --- Verify panel (clickable + download) ---
     const stats = {
-      day: toDayName(dateEl.value),
+      day: dayName,
       shift,
       presentMarkers: SETTINGS.present_markers || ["X"],
       rosterRows: rosterRaw.length,
@@ -351,15 +381,17 @@ processBtn.addEventListener("click", async ()=>{
       rosterEnriched: rosterEnriched.length,
       afterCorner: filtered.length,
       idMatches: rosterEnriched.filter(x => x.empId && onPremMap.has(x.empId)).length,
-      byDept: { Inbound: {expected: expected.Inbound, present: present.Inbound},
-                ICQA:    {expected: expected.ICQA,    present: present.ICQA},
-                CRETs:   {expected: expected.CRETs,   present: present.CRETs} },
+      byDept: {
+        Inbound: {expected: expected.Inbound, present: present.Inbound},
+        DA:      {expected: expected.DA,      present: present.DA},
+        ICQA:    {expected: expected.ICQA,    present: present.ICQA},
+        CRETs:   {expected: expected.CRETs,   present: present.CRETs}
+      },
       samples,
       auditRows
     };
     renderVerifyPanel(stats);
 
-    // optional warnings
     const unknownTypes = filtered.filter(x=>x.empType==="UNKNOWN").length;
     if (unknownTypes>0){
       console.warn(`Found ${unknownTypes} UNKNOWN employment types — update classifier if needed.`);

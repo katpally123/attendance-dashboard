@@ -1,4 +1,4 @@
-// ====== SETTINGS ======
+// ====== SETTINGS (raw URL so it works on Pages) ======
 const SETTINGS_URL = "https://raw.githubusercontent.com/katpally123/attendance-dashboard/main/config/settings.json";
 
 // ====== Load settings ======
@@ -8,6 +8,7 @@ fetch(SETTINGS_URL)
   .then(cfg => { SETTINGS = cfg; ensureDABucket(); renderShiftCodes(); })
   .catch(e => { console.error(e); alert("Couldn't load settings.json"); });
 
+// Ensure DA exists without editing settings.json
 function ensureDABucket(){
   SETTINGS.departments = SETTINGS.departments || {};
   if (!SETTINGS.departments.DA) {
@@ -209,6 +210,17 @@ function renderVerifyPanel(stats) {
   if (dl) dl.onclick = ()=> downloadCSV(`audit_${stats.day}_${stats.shift}.csv`, stats.auditRows);
 }
 
+// Converts "10:00", "7:30", "8", "8.0", "8 h" → decimal hours
+function toHours(val) {
+  const t = String(val ?? "").trim();
+  if (!t) return 0;
+  const m = t.match(/^(\d{1,2}):(\d{2})$/); // HH:MM
+  if (m) return parseInt(m[1],10) + parseInt(m[2],10)/60;
+  const cleaned = t.replace(/,/g, ".").replace(/[^\d.]/g, "");
+  const n = parseFloat(cleaned);
+  return isNaN(n) ? 0 : n;
+}
+
 // ====== Main process ======
 processBtn.addEventListener("click", async ()=>{
   if (!SETTINGS){ alert("Settings not loaded yet. Try again."); return; }
@@ -229,23 +241,32 @@ processBtn.addEventListener("click", async ()=>{
       parseCSVFile(mytimeEl.files[0], {header:true, skipFirstLine:true})
     ]);
 
-    // Optional: Vacation file (CAN Daily Hours Summary)
+    // ---------- Vacation (robust parsing) ----------
     let vacRaw = [];
+    let vacIds = new Set();
+    let vacRowsCount = 0;
+
     if (vacEl.files[0]) {
-      // detect header row (report has a title row at index 0)
       const vacText = await vacEl.files[0].text();
-      const firstNewline = vacText.indexOf("\n");
-      const secondLine = vacText.slice(firstNewline+1).split("\n")[0];
-      const hasEmployeeIdInSecond = /employee id/i.test(secondLine);
-      // if second line has headers, skip the first line
+
+      // Detect header row (first line containing "Employee ID" / "Person ID" / "Person Number")
+      const lines = vacText.split(/\r?\n/).filter(l => l.trim().length);
+      let headerIndex = 0;
+      for (let i = 0; i < Math.min(50, lines.length); i++) {
+        if (/(employee id|person id|person number)/i.test(lines[i])) { headerIndex = i; break; }
+      }
+
       vacRaw = await new Promise(resolve=>{
         Papa.parse(vacText, {
-          header: hasEmployeeIdInSecond,
+          header: true,
           skipEmptyLines: true,
           transformHeader: h => (h||"").trim(),
+          beforeFirstChunk: chunk => {
+            const arr = chunk.split(/\r?\n/);
+            return arr.slice(headerIndex).join("\n");
+          },
           complete: res => {
             const rows = res.data.map(r=>{
-              // drop "Unnamed" keys if any
               Object.keys(r).forEach(k=>{ if (/^Unnamed/.test(k)) delete r[k]; });
               return r;
             });
@@ -253,6 +274,55 @@ processBtn.addEventListener("click", async ()=>{
           }
         });
       });
+
+      vacRowsCount = vacRaw.length;
+
+      const sampleV = vacRaw[0] || {};
+      const V_ID    = findKey(sampleV, ["Employee ID","Person ID","Person Number","Badge ID","ID"]) || "Employee ID";
+      const V_DATE  = findKey(sampleV, ["Date","Worked Date","Shift Date","Business Date"]);
+      const V_VAC   = findKey(sampleV, ["Vacation","Vacation Hours"]);
+      const V_VACU  = findKey(sampleV, ["Vacation Unpaid","Vacation (Unpaid)","Vacation Unpaid Hours"]);
+      const V_HOURS = findKey(sampleV, ["Hours","Total Hours","Qty","Quantity"]);
+      const V_CODE1 = findKey(sampleV, ["Pay Code","PayCode","Earning Code"]);
+      const V_CODE2 = findKey(sampleV, ["Absence Name","Absence Type","Time Off Type","Time-Off Type","Category"]);
+
+      const selectedISO = dateEl.value; // "YYYY-MM-DD"
+      const sameDay = (val) => {
+        if (!V_DATE) return true;  // file may already be single-day
+        const d = new Date(val);
+        if (isNaN(d)) return false;
+        return d.toISOString().slice(0,10) === selectedISO;
+      };
+
+      const vacIdsA = new Set(); // wide columns Vacation / Vacation Unpaid
+      if (V_VAC || V_VACU) {
+        for (const row of vacRaw) {
+          const idRaw = row[V_ID];
+          if (!idRaw || !sameDay(row[V_DATE])) continue;
+          const vacH  = V_VAC  ? toHours(row[V_VAC])  : 0;
+          const vacUH = V_VACU ? toHours(row[V_VACU]) : 0;
+          if ((vacH + vacUH) > 0) {
+            const id = String(idRaw).replace(/\D/g,"").replace(/^0+/,"");
+            if (id) vacIdsA.add(id);
+          }
+        }
+      }
+
+      const vacIdsB = new Set(); // long-form rows: code contains "vac" and hours > 0
+      if ((V_CODE1 || V_CODE2) && V_HOURS) {
+        for (const row of vacRaw) {
+          const idRaw = row[V_ID];
+          if (!idRaw || !sameDay(row[V_DATE])) continue;
+          const label = String(row[V_CODE1 || V_CODE2] || "").toLowerCase();
+          const hrs = toHours(row[V_HOURS]);
+          if (/vac/.test(label) && hrs > 0) {
+            const id = String(idRaw).replace(/\D/g,"").replace(/^0+/,"");
+            if (id) vacIdsB.add(id);
+          }
+        }
+      }
+
+      vacIds = new Set([...vacIdsA, ...vacIdsB]);
     }
 
     // --- Resolve roster headers ---
@@ -283,33 +353,6 @@ processBtn.addEventListener("click", async ()=>{
       if (pid) onPremMap.set(pid, (onPremMap.get(pid) || false) || isOnPrem);
     }
 
-    // --- Vacation ID set (Vacation or Vacation Unpaid > 0) ---
-    let vacIds = new Set();
-    let vacRowsCount = 0;
-    if (vacRaw && vacRaw.length){
-      const v0 = vacRaw[0] || {};
-      const V_ID = findKey(v0, ["Employee ID","Person ID","Person Number","Badge ID","ID"]);
-      const V_VAC = findKey(v0, ["Vacation"]);
-      const V_VACUNPAID = findKey(v0, ["Vacation Unpaid"]);
-
-      const toNum = s => {
-        const t = String(s ?? "").replace(/,/g,"").trim();
-        const n = parseFloat(t); return isNaN(n) ? 0 : n;
-      };
-
-      // Build once for speed
-      for (const row of vacRaw){
-        const id = normalizeId(row[V_ID]);
-        if (!id) continue;
-        const vacH = V_VAC ? toNum(row[V_VAC]) : 0;
-        const vacUH= V_VACUNPAID ? toNum(row[V_VACUNPAID]) : 0;
-        if ((vacH + vacUH) > 0){
-          vacIds.add(id);
-        }
-      }
-      vacRowsCount = vacRaw.length;
-    }
-
     // --- Enrich roster ---
     const rosterEnriched = rosterRaw.map(r => {
       const empId  = normalizeId(r[R_EMP]);
@@ -324,10 +367,10 @@ processBtn.addEventListener("click", async ()=>{
       return { empId, deptId, areaId, empType, sp, corner, met, start, onPrem };
     });
 
-    // --- Corner filter THEN vacation exclusion (for Expected only) ---
+    // --- Corner filter ---
     let filtered = rosterEnriched.filter(x => codes.includes(x.corner));
 
-    // Exclude new hires first
+    // --- Exclude new hires (<3 days) if toggled ---
     if (newHireEl.checked){
       const dayStart = new Date(dateEl.value+"T00:00:00");
       filtered = filtered.filter(x => {
@@ -337,10 +380,8 @@ processBtn.addEventListener("click", async ()=>{
       });
     }
 
-    // Track vacation on each row
-    filtered = filtered.map(x => ({...x, vac: vacIds.has(x.empId)}));
-
-    // Expected cohort AFTER vacation
+    // --- Vacation flag per row, then Net Expected (exclude vac) ---
+    filtered = filtered.map(x => ({ ...x, vac: vacIds.has(x.empId) }));
     const expectedCohort = filtered.filter(x => !x.vac);
     const vacExcludedCount = filtered.length - expectedCohort.length;
 
@@ -353,22 +394,22 @@ processBtn.addEventListener("click", async ()=>{
     const belongsICQA           = x => cfg.ICQA.dept_ids.includes(x.deptId) && x.areaId === cfg.ICQA.management_area_id;
     const belongsCRETs          = x => cfg.CRETs.dept_ids.includes(x.deptId) && x.areaId === cfg.CRETs.management_area_id;
 
-    const groupByRule = (rows, rule) => rows.filter(rule);
+    const group = (rows, pred) => rows.filter(pred);
 
     // Expected (net of vacation)
     const expGroups = {
-      Inbound: groupByRule(expectedCohort, belongsInboundMinusDA),
-      DA:      groupByRule(expectedCohort, belongsDA),
-      ICQA:    groupByRule(expectedCohort, belongsICQA),
-      CRETs:   groupByRule(expectedCohort, belongsCRETs)
+      Inbound: group(expectedCohort, belongsInboundMinusDA),
+      DA:      group(expectedCohort, belongsDA),
+      ICQA:    group(expectedCohort, belongsICQA),
+      CRETs:   group(expectedCohort, belongsCRETs)
     };
 
-    // Present (unchanged by vacation)
+    // Present (MyTime)
     const preGroups = {
-      Inbound: groupByRule(filtered, x => belongsInboundMinusDA(x) && x.onPrem),
-      DA:      groupByRule(filtered, x => belongsDA(x)             && x.onPrem),
-      ICQA:    groupByRule(filtered, x => belongsICQA(x)           && x.onPrem),
-      CRETs:   groupByRule(filtered, x => belongsCRETs(x)          && x.onPrem)
+      Inbound: group(filtered, x => belongsInboundMinusDA(x) && x.onPrem),
+      DA:      group(filtered, x => belongsDA(x)             && x.onPrem),
+      ICQA:    group(filtered, x => belongsICQA(x)           && x.onPrem),
+      CRETs:   group(filtered, x => belongsCRETs(x)          && x.onPrem)
     };
 
     const countByType = (rows) => {
@@ -390,8 +431,7 @@ processBtn.addEventListener("click", async ()=>{
       CRETs:   countByType(preGroups.CRETs)
     };
 
-    // Note under Expected table: show gross - vacation = net
-    expectedNote.textContent = `Expected = (Corner-filtered cohort) − (Vacation exclusions). Vacation excluded: ${vacExcludedCount}`;
+    expectedNote.textContent = `Expected = Corner-filtered cohort − Vacation exclusions. Vacation excluded: ${vacExcludedCount}`;
 
     // Render
     const order = ["Inbound","DA","ICQA","CRETs"];
@@ -400,7 +440,7 @@ processBtn.addEventListener("click", async ()=>{
     renderChips(expected, present, dayName, shift, codes, vacExcludedCount);
     fileStatus.textContent = "Done.";
 
-    // --- Build audit evidence (row-level) ---
+    // --- Audit evidence (row-level) ---
     const tagDept = (x)=>{
       if (belongsDA(x)) return "DA";
       if (belongsInboundMinusDA(x)) return "Inbound";
